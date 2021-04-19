@@ -40,6 +40,18 @@ pub enum Ast {
     /// Content stored in a specific file.
     File(PathBuf, Vec<Ast>),
 
+    /// An unordered list
+    UnorderedList(Vec<Ast>), // must be UnorderedListItem
+
+    /// An unordered list item
+    UnorderedListItem {
+        /// The level of the title.
+        level: u8,
+
+        /// The content of the title.
+        children: Vec<Ast>,
+    },
+
     /// An empty line.
     Newline,
 
@@ -63,7 +75,9 @@ impl Ast {
             | Ast::Paragraph(children)
             | Ast::Title { children, .. }
             | Ast::Bold(children)
-            | Ast::Italic(children) => Some(children),
+            | Ast::Italic(children)
+            | Ast::UnorderedList(children)
+            | Ast::UnorderedListItem { children, .. } => Some(children),
             _ => None,
         }
     }
@@ -109,7 +123,7 @@ impl Ast {
         indent: &str,
         last_child: bool,
     ) -> fmt::Result {
-        let delimiter1 = if indent == "" {
+        let delimiter1 = if indent.is_empty() {
             "─"
         } else if last_child {
             "└"
@@ -168,6 +182,17 @@ impl Ast {
             Ast::Bold(_) => writeln!(fmt, "{}{}", new_indent, "Bold".cyan().bold())?,
 
             Ast::Italic(_) => writeln!(fmt, "{}{}", new_indent, "Italic".cyan().bold())?,
+
+            Ast::UnorderedList(_) => {
+                writeln!(fmt, "{}{}", new_indent, "UnorderedList".blue().bold())?
+            }
+
+            Ast::UnorderedListItem { level, .. } => writeln!(
+                fmt,
+                "{}{}",
+                new_indent,
+                &format!("UnorderedListItem(level={})", level).blue().bold()
+            )?,
         }
 
         if let Some(children) = self.children() {

@@ -54,8 +54,8 @@ pub fn itemize_ast_aux<'a>(
                     buffer,
                 );
             }
-            buffer.push(Item::glue(Pt(0.0), PLUS_INFINITY, Pt(0.0)));
-            buffer.push(Item::penalty(Pt(0.0), f64::NEG_INFINITY, false));
+
+            end_line(buffer);
         }
 
         Ast::Bold(children) => {
@@ -122,13 +122,40 @@ pub fn itemize_ast_aux<'a>(
                 itemize_ast_aux(child, font_config, size, dictionary, current_style, buffer);
             }
 
-            // Appends two items to ensure the end of any paragraph is treated properly: a glue
-            // specifying the available space at the right of the last tine, and a penalty item to
-            // force a line break.
-            buffer.push(Item::glue(Pt(0.0), PLUS_INFINITY, Pt(0.0)));
-            buffer.push(Item::penalty(Pt(0.0), f64::NEG_INFINITY, false));
+            end_line(buffer);
+        }
+
+        Ast::UnorderedList(_) => {
+            // This is handled in mod.rs, Document.render
+        }
+
+        Ast::UnorderedListItem { level, children } => {
+            let bullet = " ".repeat(*level as usize) + "• ";
+
+            itemize_ast_aux(
+                &Ast::Text(bullet),
+                font_config,
+                size,
+                dictionary,
+                current_style,
+                buffer,
+            );
+
+            for child in children {
+                itemize_ast_aux(child, font_config, size, dictionary, current_style, buffer);
+            }
+
+            end_line(buffer);
         }
 
         _ => (),
     }
+}
+
+fn end_line(buffer: &mut Paragraph) {
+    // Appends two items to ensure the end of any paragraph is treated properly: a glue
+    // specifying the available space at the right of the last tine, and a penalty item to
+    // force a line break.
+    buffer.push(Item::glue(Pt(0.0), PLUS_INFINITY, Pt(0.0)));
+    buffer.push(Item::penalty(Pt(0.0), f64::NEG_INFINITY, false));
 }

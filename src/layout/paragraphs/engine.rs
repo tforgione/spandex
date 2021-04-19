@@ -68,11 +68,8 @@ pub fn algorithm<'a>(paragraph: &'a Paragraph<'a>, lines_length: &[Pt]) -> Vec<u
             } => {
                 // We can only break at a glue if it is preceeded by
                 // a bounding box.
-                can_break = b > 0
-                    && (match paragraph.items[b - 1].content {
-                        Content::BoundingBox { .. } => true,
-                        _ => false,
-                    });
+                can_break =
+                    b > 0 && matches!(paragraph.items[b - 1].content, Content::BoundingBox { .. });
 
                 if !can_break {
                     sum_width += item.width;
@@ -117,9 +114,7 @@ pub fn algorithm<'a>(paragraph: &'a Paragraph<'a>, lines_length: &[Pt]) -> Vec<u
                     node_to_remove.push(node);
                 }
 
-                if adjustment_ratio >= MIN_ADJUSTMENT_RATIO
-                    && adjustment_ratio <= MAX_ADJUSTMENT_RATIO
-                {
+                if (MIN_ADJUSTMENT_RATIO..=MAX_ADJUSTMENT_RATIO).contains(&adjustment_ratio) {
                     let measures_sum = Measures {
                         width: sum_width,
                         shrinkability: sum_shrink,
@@ -328,6 +323,28 @@ mod tests {
         // Indentated paragraph, implying the presence of a leading empty box.
         let paragraph = itemize_ast(&ast, &config, Pt(10.0), &en_us, Pt(7.5));
         assert_eq!(paragraph.items.len(), 32);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_unordered_list_itemization() -> Result<()> {
+        let words = "Lorem ipsum dolor sit amet.";
+        let ast = Ast::UnorderedListItem {
+            level: 0,
+            children: vec![Ast::Text(words.into())],
+        };
+
+        let en_us = Standard::from_embedded(Language::EnglishUS)?;
+
+        let (_, font_manager) = Config::with_title("Test").init()?;
+        let config = font_manager.default_config();
+
+        // The length is one per character and per space (which becomes glue I think),
+        // plus 2 for the glue and penalty added at the end of itemize_ast_aux,
+        // but this only makes 31, so I'm not sure what the other two are.
+        let list = itemize_ast(&ast, &config, Pt(10.0), &en_us, Pt(0.0));
+        assert_eq!(list.items.len(), 33);
 
         Ok(())
     }

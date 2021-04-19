@@ -1,5 +1,4 @@
 //! This module contains all the functions needed for parsing.
-
 // This module contains marcos that can't be documented, so we'll allow missing docs here.
 #![allow(missing_docs)]
 // Allow redundant closure because of nom.
@@ -10,18 +9,37 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use nom::branch::alt;
-use nom::bytes::complete::{tag, take_till1, take_until};
-use nom::character::complete::{char, line_ending, not_line_ending, space0};
+use nom::bytes::complete::{tag, take_till1, take_until, take_while};
+use nom::character::complete::{char, line_ending, none_of, not_line_ending, space0};
 use nom::combinator::{map, map_res, opt, rest, verify};
-use nom::multi::{fold_many0, many0, many1_count};
-use nom::sequence::delimited;
-use nom::IResult;
+use nom::error::{ErrorKind, ParseError};
+use nom::multi::{fold_many0, many0, many0_count, many1, many1_count, many_till};
+use nom::sequence::{delimited, terminated};
+use nom::{Err, IResult, InputLength};
 
 use crate::layout::paragraphs::ligatures::ligature;
 use crate::parser::ast::Ast;
 use crate::parser::error::{EmptyError, ErrorType, Errors};
 use crate::parser::warning::{EmptyWarning, WarningType, Warnings};
 use crate::parser::{position, Error, Parsed, Span};
+
+pub fn end_of_input<I, Error: ParseError<I>>() -> impl Fn(I) -> IResult<I, I, Error>
+where
+    I: InputLength + Copy,
+{
+    move |input: I| {
+        if input.input_len() == 0 {
+            Ok((input, input))
+        } else {
+            let e: ErrorKind = ErrorKind::Tag;
+            Err(Err::Error(Error::from_error_kind(input, e)))
+        }
+    }
+}
+
+pub fn is_space(c: char) -> bool {
+    c == ' '
+}
 
 /// Returns true if the character passed as parameter changes the type of parsing we're going to do.
 pub fn should_stop(c: char) -> bool {
@@ -234,6 +252,86 @@ pub fn parse_title(input: Span) -> IResult<Span, Ast> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
+// For unordered lists
+////////////////////////////////////////////////////////////////////////////////
+
+/// Parses an unordered list.
+/// ```
+/// # use spandex::parser::ast::Ast;
+/// # use spandex::parser::Span;
+/// # use spandex::parser::combinators::parse_unordered_list;
+/// let input = Span::new("- This is my list");
+/// let list = parse_unordered_list(input).unwrap().1;
+/// assert_eq!(list,
+///     Ast::UnorderedList(
+///         vec![Ast::UnorderedListItem {
+///             level: 0,
+///             children: vec![Ast::Text(String::from("This is my list"))]
+///         }]
+///     )
+/// );
+/// ```
+pub fn parse_unordered_list(input: Span) -> IResult<Span, Ast> {
+    let (input, items) = many1(parse_unordered_list_item)(input)?;
+
+    // could parse all the items, with an indent, and then remake the ask with the relevant nesting as required?
+    // or do the same and have the ast items have an indent level
+    Ok((input, Ast::UnorderedList(items)))
+}
+
+/// Parses an unordered list item.
+/// ```
+/// # use spandex::parser::ast::Ast;
+/// # use spandex::parser::Span;
+/// # use spandex::parser::combinators::parse_unordered_list_item;
+/// let input = Span::new("- This is my list");
+/// let item = parse_unordered_list_item(input).unwrap().1;
+/// assert_eq!(item,
+///     Ast::UnorderedListItem {
+///         level: 0,
+///         children: vec![Ast::Text(String::from("This is my list"))]
+///     }
+/// );
+/// ```
+pub fn parse_unordered_list_item(input: Span) -> IResult<Span, Ast> {
+    let (after_dash, level) = terminated(many0_count(char(' ')), tag("- "))(input)?;
+
+    // Matching the item text is fiddly, mainly because take_until is only for nom
+    // primitives, and not combinators, and the end tag is a variable length thing.
+    // We could make it simpler by only supporting a set level of nesting, and
+    // explicitly defining all these with tag
+    // This solution matches a character at a time until the start of the next item
+    // is found, or the end of the input / block is found.
+    // It then turns these characters in to a string, and uses this in a `tag`, so
+    // that the Span information is retained.
+    let (_, (characters, _terminator)) = many_till(
+        none_of(""),
+        alt((
+            delimited(line_ending, take_while(is_space), tag("- ")),
+            end_of_input(),
+        )),
+    )(after_dash)?;
+
+    let item_string: String = characters.into_iter().collect();
+
+    let (after_item, item_span) = tag(&*item_string)(after_dash)?;
+
+    // Items want start parsing on a dash or a space, so we need to move past
+    // any line endings
+    let (after_newline, _) = alt((line_ending, rest))(after_item)?;
+
+    // This parses the content of the list item, for italic and bold and suchlike
+    let (_, children) = parse_group(item_span)?;
+
+    let unordered_list_item = Ast::UnorderedListItem {
+        level: level as u8,
+        children,
+    };
+
+    Ok((after_newline, unordered_list_item))
+}
+
+////////////////////////////////////////////////////////////////////////////////
 // For main
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -274,7 +372,7 @@ pub fn get_block(input: Span) -> IResult<Span, Span> {
 /// assert_eq!(block, Ast::Paragraph(vec![Ast::Text(String::from("First paragraph"))]));
 /// ```
 pub fn parse_block_content(input: Span) -> IResult<Span, Ast> {
-    alt((parse_title, parse_paragraph))(input)
+    alt((parse_title, parse_unordered_list, parse_paragraph))(input)
 }
 
 /// Parses a whole dex file.
